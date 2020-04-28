@@ -1,5 +1,6 @@
-# FASTQINS
-FASTQINS is a Python pipeline to map transponson insertions from Tn-seq data. 
+# ANUBIS
+
+ANUBIS is a Python framework to analyze Tn-seq data.
 
 ## Requirements
 Specific libraries are required by ANUBIS. We provide a [requirements](./requirements.txt) file to install everything at once. To do so, you will need first to have [pip](https://pip.pypa.io/en/stable/installing/) installed and then run:
