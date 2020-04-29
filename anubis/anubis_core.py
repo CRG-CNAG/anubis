@@ -25,6 +25,9 @@ import numpy as np
 import pandas as pd
 import ruptures as rpt
 
+
+from random import randrange
+
 from pylab import cm
 import seaborn as sns
 sns.set_style("white")
@@ -1593,6 +1596,224 @@ class dataset(object):
             return _rs
         else:
             return _rs, new_profile, new_ins
+
+    def cqn(self, metric='dens', condition='L', annotation='ig',
+            bins='auto', density=True, same_size=True, normalization='minmax',
+            side_removal=25, min_size=25, max_wdw_size=200, wdw_step=20, wdw_iter=100, 
+            show_plot=True, save_plot=False, inplace=False):
+            """
+            Condition can be L or GC 
+            normalization rank or max
+            """
+            datasetcopy = self.copy('swallow')
+            # annotaton
+    
+            if annotation=='ig':
+                if bins=='auto':
+                    bins = 10
+                datasetcopy.annotation = datasetcopy.intergenic_annotation(side_removal=side_removal, min_size=min_size)
+            elif annotation=='wdw' or condition=='L':
+                wit = range(1, max_wdw_size+1, wdw_step)
+                bins = len(wit)
+                annu = {}
+                for l in wit:
+                    for c in range(1, wdw_iter+1):
+                        i = randrange(1, self.genome_length+1)
+                        annu['wdw_'+str(l)+'_'+str(c)] = [i, i+l-1, '+']
+                datasetcopy.annotation = annu
+            elif annotation=='all':
+                if bins=='auto':
+                    bins = 10
+            else:
+                if bins=='auto':
+                    bins = 5
+                datasetcopy.annotation = {k:v for k, v in datasetcopy.annotation.items() if val_set.get(k, 0)=='N'}
+            # metric
+            datasetcopy.metric_by(by='annotation', metric=['L', metric], Nterminal=0, Cterminal=0, inplace=True, annotation_shortening=False)   
+            # load data
+            ides = datasetcopy.metric_ides
+            if condition=='GC':
+                cond = np.array([GC(subseq(datasetcopy.genome_sequence, datasetcopy.annotation[k][0]-1, datasetcopy.annotation[k][1])) for k in ides])
+            if condition=='L':
+                cond = datasetcopy.metric_lengths
+            x = datasetcopy.metric_values[metric]
+            # binarize based on condition
+            if same_size:
+                a = np.column_stack((cond, x))
+                a = sorted(a, key=itemgetter(0))
+                bin_edges = [i[0][0] for i in np.array_split(a, bins)]
+                bin_edges.append(max(cond)+1)
+            else:
+                hist, bin_edges = np.histogram(cond, bins=bins, density=density)
+                bin_edges=list(bin_edges)
+                bin_edges[-1]+=1
+            print(bin_edges)
+            labels = [int(np.mean([a, b])) for a, b in zip(bin_edges[:-1], bin_edges[1:])]
+            rs = {l:[] for l in labels}
+            idecorresp = {l:[] for l in labels}
+    
+            # for later
+            pal = sns.color_palette('mako', bins)
+            cols = pal.as_hex()
+            colores1=[]
+            for cond1, x1, ide1 in zip(cond, x, ides):
+                for a, b, label in zip(bin_edges[:-1], bin_edges[1:], labels):
+                    if a<=cond1<b or cond1>=max(bin_edges):
+                        rs[label].append(x1)
+                        idecorresp[label].append(ide1)
+                        colores1.append(cols[labels.index(label)])
+            bin_labels = sorted(list(rs.keys()))
+            boxplot_x = [rs[k] for k in bin_labels]
+            ide_labels = [idecorresp[k] for k in bin_labels]
+
+            # normalize
+            df = pd.DataFrame(boxplot_x).T
+            if normalization=='rank':
+                rank_mean = df.stack().groupby(df.rank(method='first').stack().astype(int)).mean()
+                dfcorrected = df.rank(method='min').stack().astype(int).map(rank_mean).unstack()
+            else:
+                dfcorrected = (df-df.min(axis=0))/(df.max(axis=0)-df.min(axis=0))
+                
+            boxplot_x_corrected = [np.array(dfcorrected[a]) for a in range(len(bin_labels))]
+            boxplot_x_corrected = [ii[~np.isnan(ii)] for ii in boxplot_x_corrected]
+
+            # metrics corrected for intergenic
+            x_corrected_byide = {}
+            c=0
+            for _ide1, _x1 in zip(ide_labels, boxplot_x_corrected):
+                if len(_ide1)==1 and len(_x1)==0:
+                    _x1 = boxplot_x[c]
+                for ide1, x1 in zip(_ide1, _x1):
+                    x_corrected_byide[ide1]=x1
+                c+=1
+            x_corrected = np.array([x_corrected_byide[k] for k in ides])
+    
+            # correct gene metrics
+            if (not self.metric_values) or (metric not in self.metric_values):
+                self.metric_by(by='annotation', metric=['L', metric])
+            genes = self.metric_ides
+            x_genes = self.metric_values[metric]
+            if condition=='GC':
+                cond_genes = np.array([GC(subseq(datasetcopy.genome_sequence, self.annotation[k][0]-1, self.annotation[k][1])) for k in genes])
+            if condition=='L':
+                cond_genes = datasetcopy.metric_lengths
+
+            rs = {l:[] for l in labels}
+            idecorresp = {l:[] for l in labels}
+            used = set()
+            colores2=[]
+            color_labels = []
+
+            for cond1, x1, ide1 in zip(cond_genes, x_genes, genes):
+                if cond1>=max(bin_edges) and ide1 not in used:
+                    rs[labels[-1]].append(x1)
+                    idecorresp[labels[-1]].append(ide1)
+                    used.add(ide1)
+                    colores2.append(cols[-1])
+                    color_labels.append(bins-1)
+
+                elif cond1<=min(bin_edges) and ide1 not in used:
+                    rs[labels[0]].append(x1)
+                    idecorresp[labels[0]].append(ide1)                
+                    used.add(ide1)
+                    colores2.append(cols[0])
+                    color_labels.append(0)
+
+                else:
+                    for a, b, label in zip(bin_edges[:-1], bin_edges[1:], labels):
+                        if a<=cond1<b  and ide1 not in used:
+                            rs[label].append(x1)
+                            idecorresp[label].append(ide1)
+                            used.add(ide1)
+                            colores2.append(cols[labels.index(label)])
+                            color_labels.append(labels.index(label))
+
+
+            
+            boxplot_x_genes = [rs[k] for k in bin_labels]
+            ide_labels_genes = [idecorresp[k] for k in bin_labels]
+
+            # normalize genes
+            df2 = pd.DataFrame(boxplot_x_genes).T
+            if normalization=='rank':
+                df2corrected = df2.rank(method='min').stack().astype(int).map(rank_mean).unstack()
+            else:
+                df2corrected = (df2-df.min(axis=0))/(df.max(axis=0)-df.min(axis=0))
+            #return df2, df2corrected, df.max(axis=0)
+            boxplot_x_corrected_genes = [minmax(np.array(df2corrected[a])) for a in range(len(bin_labels))]
+            boxplot_x_corrected_genes = [ii[~np.isnan(ii)] for ii in boxplot_x_corrected_genes]
+            # metrics corrected for intergenic
+            x_corrected_byide = {}
+            c=0
+            for _ide1, _x1 in zip(ide_labels_genes, boxplot_x_corrected_genes):
+                if len(_ide1)==1 and len(_x1)==0:
+                    _x1 = boxplot_x_genes[c]
+                for ide1, x1 in zip(_ide1, _x1):
+                    x_corrected_byide[ide1]=x1
+                c+=1
+            x_corrected_genes = np.array([x_corrected_byide[k] for k in genes])
+    
+            # plot
+            plt.figure(figsize=(6, 8))
+            plt.subplot(3, 2, 1)
+            box = plt.boxplot(boxplot_x, labels=bin_labels, patch_artist=True)
+            for patch, color in zip(box['boxes'], cols):
+                patch.set_facecolor(color)
+            plt.xlabel(condition)
+            plt.ylabel(metric)
+    
+            plt.subplot(3, 2, 2)
+            box = plt.boxplot(boxplot_x_corrected, labels=bin_labels, patch_artist=True)
+            for patch, color in zip(box['boxes'], cols):
+                patch.set_facecolor(color)
+            plt.xlabel('{} [{} bins] for {}'.format(condition, bins, annotation))
+            plt.ylabel('{} x {} for {}'.format(metric, condition, annotation))    
+    
+            plt.subplot(3, 2, 3)
+            plt.scatter(cond, x, c=colores1)
+            #plt.plot(labels, [np.mean(i) for i in boxplot_x], 'r--', linewidth=3)
+            plt.xlabel(condition+' for '+annotation)
+            plt.ylabel(metric+' for '+annotation)
+    
+            plt.subplot(3, 2, 4)
+            plt.scatter(cond, x_corrected, c=colores1)
+            #plt.plot(labels, [np.mean(i) for i in boxplot_x_corrected], 'r--', linewidth=3)
+            plt.xlabel(condition+' for genes')
+            plt.ylabel('{} x {}  for genes'.format(metric, condition))    
+    
+            plt.subplot(3, 2, 5)
+            plt.scatter(cond_genes, x_genes, c=colores2)
+            #plt.plot(labels, [np.mean(i) for i in boxplot_x_genes], 'r--', linewidth=3)
+            plt.xlabel(condition)
+            plt.ylabel(metric)
+    
+            plt.subplot(3, 2, 6)
+            plt.scatter(cond_genes, x_corrected_genes, c=colores2)
+            #plt.plot(labels, [np.mean(i) for i in boxplot_x_corrected_genes], 'r--', linewidth=3)
+            plt.xlabel(condition+' for genes')
+            plt.ylabel('{} x {}  for genes'.format(metric, condition))   
+            plt.show()
+    
+            c=0
+            for xx, yy, label in zip(boxplot_x_genes, boxplot_x_corrected_genes, bin_labels):
+                plt.scatter(xx, yy, label=label, color=cols[c])
+                c+=1
+            plt.legend()
+        
+            if save_plot:
+                plt.savefig(save_plot)
+            if show_plot:
+                plt.show()
+            else:
+                plt.close
+        
+            # load
+            if inplace:
+                self.metric[metric+'_by_'+condition]=x_corrected_genes
+            else:
+                df = pd.DataFrame.from_dict({k:[k, a, b, c, label] for k, a, b, c, label in zip(genes, x_genes, x_corrected_genes, cond_genes, color_labels)}, orient='index')
+                df.columns = ['name', metric, metric+'_by_'+condition, 'gc', 'label']
+            return df
 
     def length(self, n=100, iterations=500, max_size=None, **kwargs):
         metric = ['L']
