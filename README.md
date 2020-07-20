@@ -4,7 +4,6 @@
   <img src=".logo/anubis.png"/>
 </p>
 
-
 ANUBIS is a Python framework to analyze Tn-seq data.
 
 ## Requirements
