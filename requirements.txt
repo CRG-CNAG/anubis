@@ -1,5 +1,3 @@
-re
-glob
 argparse
 subprocess
 numpy
@@ -19,6 +17,5 @@ matplotlib
 operator
 joblib
 multiprocessing
-collections
 math
 sklearn

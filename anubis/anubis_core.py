@@ -557,6 +557,19 @@ def metric_for_annotations(array, annotation, metric, total_reads=0):
         results = {k:specific_metrics[metric](array[v[0]-1:v[1]]) for k, v in annotation.items()}
     return results
 
+def safe_max(a):
+    if len(a)==0:
+        return 0.0
+    else:
+        return max(a)
+
+def safe_min(a):
+    if len(a)==0:
+        return 0.0
+    else:
+        return min(a)
+
+
 def ignore_metric_for_annotations(narray, annotation, metric, total_reads=0, ignore=False, gene_len_thr=12, ignore_len_thr=100):
     """
     Function to compute metrics over annotation dictionary
@@ -565,13 +578,15 @@ def ignore_metric_for_annotations(narray, annotation, metric, total_reads=0, ign
 
     only tested for I, R and dens
     """
+    if not ignore:
+        gene_len_thr=0        
     array = narray.copy()
     accepted_metrics = set(['sum', 'std', 'mean', 'median', 'count', 'L', 'min', 'max', 'I', 'dens', 'R', 'RI', 'CPM', 'RPKM'])
-    if metric not in accepted_metrics:
-        sys.exit(metric+' not accepted. Please provide one of the following:\n- '+'\n- '.join(accepted_metrics))
+    #if metric not in accepted_metrics:
+    #    sys.exit(metric+' not accepted. Please provide one of the following:\n- '+'\n- '.join(accepted_metrics))
 
     specific_metrics = {'sum':sum, 'std':np.std, 'mean':np.mean, 'median':np.median,
-                        'count':len, 'L':len, 'min':min, 'max':max,
+                        'count':len, 'L':len, 'min':safe_min, 'max':safe_max,
                         'I':return_I, 'dens':return_dens,
                         'R':return_R, 'RI':return_RI,
                         'CPM':return_CPM, 'RPKM':return_RPKM}
@@ -580,7 +595,8 @@ def ignore_metric_for_annotations(narray, annotation, metric, total_reads=0, ign
         if total_reads==0:
             total_reads = sum(array)
         results = {k:specific_metrics[metric](array[v[0]-1:v[1]], total_reads=total_reads) for k, v in annotation.items()}
-    else:
+    elif gene_len_thr>0:
+        print('gene len thr', gene_len_thr)
         if ignore:
             for i in ignore:
                 array[i-1] = -1
@@ -593,6 +609,8 @@ def ignore_metric_for_annotations(narray, annotation, metric, total_reads=0, ign
                     results[k] = specific_metrics[metric](subarray)
                 else:
                     results[k] = 0.0
+    else:
+        results = {k:specific_metrics[metric](array[v[0]-1:v[1]]) for k, v in annotation.items()}
     return results
 
 def windows(array, window_size=False, bins=False, metric='mean', circular=True, overlapping=True):
@@ -2656,11 +2674,12 @@ class dataset(object):
         if strand=='-' or strand==0:
             gene_reads = gene_reads[::-1]
         # Define threshold if required
-        if not thresholds:
-            thresholds = define_thresholds(gene_reads, max_value_reads, by_percentile, step)
+
 
         # Calculate the metric
         if __auc__:
+            if not thresholds:
+                thresholds = define_thresholds(gene_reads, max_value_reads, by_percentile, step)
             return np.around(np.trapz(read_decay(gene_reads, thresholds, metric=metric, frame=frame, total_reads=sum(self.reads)), x=thresholds), decimals=2)
         else:
             return np.around(read_decay(gene_reads, thresholds, metric=metric, frame=frame, total_reads=sum(self.reads)), decimals=2)
@@ -2744,7 +2763,7 @@ def percentile_iterator(values, step=5):
     for i in range(0, 100+step, step):
         yield i, np.percentile(values, i)
 
-def read_decay(your_reads, thresholds, metric='I', frame=False, total_reads=0, ignore=None,  gene_len_thr=10):
+def read_decay(your_reads, thresholds, metric='I', frame=False, total_reads=0, ignore=None,  gene_len_thr=0):
     """ Return metric for section of reads passing threshold """
     if not frame:
         if thresholds==0.1:
